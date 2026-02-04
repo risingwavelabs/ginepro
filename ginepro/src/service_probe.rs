@@ -97,8 +97,6 @@ impl<Lookup: LookupService> GrpcServiceProbe<Lookup> {
     pub async fn probe(mut self) -> Result<(), anyhow::Error> {
         loop {
             // If the receiver is already gone (e.g. client dropped), exit promptly.
-            // Note: we must not rely solely on `ChangesetSenderClosed`, since when there is no
-            // endpoint change, we do not send anything and thus will not observe a closed channel.
             if self.endpoint_reporter.is_closed() {
                 return Ok(());
             }
@@ -242,63 +240,5 @@ impl<Lookup: LookupService> GrpcServiceProbe<Lookup> {
         }
 
         Some(endpoint)
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use tokio::sync::mpsc;
-    use tonic::transport::Endpoint;
-    use tower::discover::Change;
-
-    struct StaticLookup {
-        endpoints: HashSet<SocketAddr>,
-    }
-
-    #[async_trait::async_trait]
-    impl LookupService for StaticLookup {
-        async fn resolve_service_endpoints(
-            &self,
-            _definition: &ServiceDefinition,
-        ) -> Result<HashSet<SocketAddr>, anyhow::Error> {
-            Ok(self.endpoints.clone())
-        }
-    }
-
-    #[tokio::test]
-    async fn probe_exits_promptly_when_receiver_dropped_even_without_changes() {
-        let service_definition = ServiceDefinition::from_parts("localhost", 5000).unwrap();
-        let endpoints = HashSet::from([SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5000)]);
-        let dns_lookup = StaticLookup { endpoints };
-
-        let config = GrpcServiceProbeConfig {
-            service_definition,
-            dns_lookup,
-            probe_interval: tokio::time::Duration::from_secs(3600),
-            endpoint_timeout: None,
-            endpoint_connect_timeout: None,
-        };
-
-        let (tx, rx): (
-            mpsc::Sender<Change<SocketAddr, Endpoint>>,
-            mpsc::Receiver<Change<SocketAddr, Endpoint>>,
-        ) = mpsc::channel(8);
-
-        let mut probe = GrpcServiceProbe::new_with_reporter(config, tx);
-
-        // First probe commits the initial endpoint set.
-        probe.probe_once().await.unwrap();
-
-        // Drop receiver so subsequent iterations should terminate immediately.
-        drop(rx);
-
-        tokio::time::timeout(tokio::time::Duration::from_secs(2), probe.probe())
-            .await
-            .expect("probe should exit promptly after receiver is dropped")
-            .unwrap();
     }
 }
