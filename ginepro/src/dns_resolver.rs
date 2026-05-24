@@ -1,6 +1,7 @@
 //! Implements [`LookupService`] for dns.
 
 use crate::{LookupService, ServiceDefinition};
+use hickory_resolver::config::LookupIpStrategy;
 use hickory_resolver::TokioResolver;
 use std::{collections::HashSet, net::SocketAddr};
 
@@ -19,9 +20,11 @@ impl DnsResolver {
         // We do not want any caching on our side.
         let opts = builder.options_mut();
         opts.cache_size = 0;
+        // The default was Ipv4thenIpv6 in hickory 0.25 but Ipv6AndIpv4 in 0.26
+        opts.ip_strategy = LookupIpStrategy::Ipv4thenIpv6;
 
         Ok(Self {
-            dns: builder.build(),
+            dns: builder.build()?,
         })
     }
 }
